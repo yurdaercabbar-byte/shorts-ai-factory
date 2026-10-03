@@ -1,5 +1,5 @@
 streamlit
-requests
+git+https://github.com/yt-dlp/yt-dlp.git
 openai-whisper
 openai
 opencv-python-headless
