@@ -13,11 +13,23 @@ st.title("🎬 Bulut Tabanlı AI Shorts Üreticisi")
 api_key_input = st.sidebar.text_input("OpenAI API Key:", type="password")
 video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
 
+# YouTube Bot Engelini Aşmak İçin Güncellenmiş Fonksiyon
 def download_video(url):
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': 'input_video.mp4',
-        'overwrites': True
+        'overwrites': True,
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'quiet': True,
+        'no_warnings': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'web'],
+                'player_skip': ['webpage', 'configs']
+            }
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
