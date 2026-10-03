@@ -1,6 +1,5 @@
 streamlit
 requests
-pytubefix
 openai-whisper
 openai
 opencv-python-headless
