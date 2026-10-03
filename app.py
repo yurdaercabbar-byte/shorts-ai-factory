@@ -3,7 +3,7 @@ import json
 import subprocess
 import cv2
 import streamlit as st
-import requests
+import yt_dlp
 import whisper
 import openai
 
@@ -15,56 +15,33 @@ video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
 
 def download_video(url):
     output_path = "input_video.mp4"
+    if os.path.exists(output_path):
+        os.remove(output_path)
+        
+    ydl_opts = {
+        'format': 'b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/b',
+        'outtmpl': output_path,
+        'overwrites': True,
+        'nocheckcertificate': True,
+        'quiet': True,
+        'no_warnings': True,
+        # YouTube Bot Engelini Aşan Özel İstemci Kimlikleri
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['mweb', 'android_vr', 'ios'],
+                'skip': ['hls', 'dash']
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+    }
     
-    # Yöntem 1: Cobalt API V10
-    try:
-        api_endpoint = "https://co.wuk.sh/api/json"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "url": url,
-            "vCodec": "h264",
-            "vQuality": "720",
-            "isAudioOnly": False
-        }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
         
-        response = requests.post(api_endpoint, json=payload, headers=headers, timeout=15)
-        data = response.json()
-        
-        dl_url = data.get("url")
-        if dl_url:
-            r = requests.get(dl_url, stream=True, timeout=30)
-            with open(output_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1024*1024):
-                    if chunk:
-                        f.write(chunk)
-            return output_path
-    except Exception:
-        pass
-
-    # Yöntem 2: Invidious Open Source Proxy API (Yedek)
-    try:
-        # Video ID çekme
-        video_id = url.split("v=")[-1].split("&")[0].split("?")[0].split("/")[-1]
-        inv_api = f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}"
-        resp = requests.get(inv_api, timeout=15).json()
-        
-        # En uygun MP4 formatını seçme
-        for fmt in resp.get("formatStreams", []):
-            if "video/mp4" in fmt.get("container", "") or "mp4" in fmt.get("type", ""):
-                v_url = fmt.get("url")
-                r = requests.get(v_url, stream=True, timeout=30)
-                with open(output_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                return output_path
-    except Exception as e:
-        raise Exception(f"Video indirilemedi, sunucu engeline takıldı. Hata: {str(e)}")
-
-    raise Exception("Video akışı bulunamadı. Lütfen başka bir YouTube linki deneyin.")
+    return output_path
 
 def get_face_center_x(video_path):
     cap = cv2.VideoCapture(video_path)
