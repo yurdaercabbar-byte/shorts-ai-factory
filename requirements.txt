@@ -1,5 +1,5 @@
 streamlit
-yt-dlp
+requests
 openai-whisper
 openai
 opencv-python-headless
