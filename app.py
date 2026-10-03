@@ -3,7 +3,7 @@ import json
 import subprocess
 import cv2
 import streamlit as st
-import yt_dlp
+import requests
 import whisper
 import openai
 
@@ -13,27 +13,38 @@ st.title("🎬 Bulut Tabanlı AI Shorts Üreticisi")
 api_key_input = st.sidebar.text_input("OpenAI API Key:", type="password")
 video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
 
-# YouTube Bot Engelini Aşmak İçin Güncellenmiş Fonksiyon
+# YouTube Bot Engelini API Üzerinden Aşan Yeni İndirme Fonksiyonu
 def download_video(url):
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': 'input_video.mp4',
-        'overwrites': True,
-        'nocheckcertificate': True,
-        'ignoreerrors': False,
-        'quiet': True,
-        'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'web'],
-                'player_skip': ['webpage', 'configs']
-            }
-        }
+    output_path = "input_video.mp4"
+    api_endpoint = f"https://api.cobalt.tools/api/json"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    return "input_video.mp4"
+    payload = {
+        "url": url,
+        "vCodec": "h264",
+        "vQuality": "720"
+    }
+    
+    response = requests.post(api_endpoint, json=payload, headers=headers)
+    data = response.json()
+    
+    if "url" in data:
+        video_download_url = data["url"]
+        r = requests.get(video_download_url, stream=True)
+        with open(output_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024*1024):
+                if chunk:
+                    f.write(chunk)
+        return output_path
+    else:
+        # Alternatif fallback indirme (pytube)
+        from pytubefix import YouTube
+        yt = YouTube(url)
+        stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+        stream.download(filename=output_path)
+        return output_path
 
 def get_face_center_x(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -106,16 +117,19 @@ if st.button("Shorts Üret") and video_url:
         st.error("Lütfen sol panelden OpenAI API Key girin!")
     else:
         with st.spinner("Video indiriliyor ve bulutta işleniyor..."):
-            v_file = download_video(video_url)
-            center_x = get_face_center_x(v_file)
-            transcript, analysis = analyze_video(v_file, api_key_input)
-            
-            os.makedirs("output", exist_ok=True)
-            for idx, clip in enumerate(analysis.get("clips", [])):
-                out_file = f"output/short_{idx+1}.mp4"
-                render_clip(v_file, clip['start_time'], clip['end_time'], out_file, center_x)
+            try:
+                v_file = download_video(video_url)
+                center_x = get_face_center_x(v_file)
+                transcript, analysis = analyze_video(v_file, api_key_input)
                 
-                st.markdown(f"### 🏆 Viral Puanı: {clip['score']} / 10")
-                st.video(out_file)
-                st.write(f"**Başlık:** {clip['title']}")
-                st.write(f"**Açıklama:** {clip['description']}")
+                os.makedirs("output", exist_ok=True)
+                for idx, clip in enumerate(analysis.get("clips", [])):
+                    out_file = f"output/short_{idx+1}.mp4"
+                    render_clip(v_file, clip['start_time'], clip['end_time'], out_file, center_x)
+                    
+                    st.markdown(f"### 🏆 Viral Puanı: {clip['score']} / 10")
+                    st.video(out_file)
+                    st.write(f"**Başlık:** {clip['title']}")
+                    st.write(f"**Açıklama:** {clip['description']}")
+            except Exception as e:
+                st.error(f"Bir hata oluştu: {str(e)}")
