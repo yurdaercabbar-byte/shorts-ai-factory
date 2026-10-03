@@ -3,7 +3,7 @@ import json
 import subprocess
 import cv2
 import streamlit as st
-import yt_dlp
+import requests
 import whisper
 import openai
 
@@ -11,43 +11,70 @@ st.set_page_config(page_title="AI Shorts Fabrikası", layout="wide")
 st.title("🎬 Bulut Tabanlı AI Shorts Üreticisi")
 
 api_key_input = st.sidebar.text_input("OpenAI API Key:", type="password")
-video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
 
-def download_video(url):
+st.write("---")
+tab1, tab2 = st.tabs(["🔗 YouTube Linki İle", "📁 Doğrudan Video Yükle (Garantili)"])
+
+with tab1:
+    video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
+
+with tab2:
+    uploaded_file = st.file_uploader("Bilgisayarınızdan/Telefonunuzdan Video Seçin:", type=["mp4", "mov", "mkv"])
+
+def download_youtube_video(url):
     output_path = "input_video.mp4"
     if os.path.exists(output_path):
         os.remove(output_path)
-        
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': output_path,
-        'overwrites': True,
-        'nocheckcertificate': True,
-        'quiet': True,
-        'no_warnings': True,
-        # YouTube Bot ve IP Engellerini Aşan TV/Web İstemci Konfigürasyonu
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv', 'web', 'mweb'],
-                'player_skip': ['js', 'configs']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-    }
     
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-    except Exception:
-        # İkinci Deneme: Sadece ses ve düşük çözünürlüklü MP4 birleştirme
-        ydl_opts['format'] = 'b[ext=mp4]'
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+    # Video ID Çıkarma
+    video_id = url.split("v=")[-1].split("&")[0].split("?")[0].split("/")[-1]
+    
+    # Kurşun geçirmez kamuya açık Piped API sunucuları (YouTube IP engellerini aşar)
+    piped_instances = [
+        "https://pipedapi.kavin.rocks",
+        "https://api.piped.privacydev.net",
+        "https://pipedapi.tokhmi.xyz",
+        "https://piped-api.garudalinux.org"
+    ]
+    
+    download_success = False
+    
+    for instance in piped_instances:
+        try:
+            api_url = f"{instance}/streams/{video_id}"
+            resp = requests.get(api_url, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                # En uygun 720p/1080p birleşik MP4 akışını bul
+                streams = data.get("videoStreams", [])
+                best_stream = None
+                for s in streams:
+                    if s.get("container") == "mp4" and s.get("videoOnly") == False:
+                        best_stream = s.get("url")
+                        break
+                
+                # Eğer birleşik yayın yoksa herhangi bir mp4 al
+                if not best_stream and streams:
+                    for s in streams:
+                        if s.get("container") == "mp4":
+                            best_stream = s.get("url")
+                            break
+                            
+                if best_stream:
+                    r = requests.get(best_stream, stream=True, timeout=30)
+                    with open(output_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=2*1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                    download_success = True
+                    break
+        except Exception:
+            continue
             
-    return output_path
+    if download_success and os.path.exists(output_path):
+        return output_path
+    else:
+        raise Exception("YouTube bulut engeli nedeniyle link indirilemedi. Lütfen videoyu cihazınıza indirip 'Doğrudan Video Yükle' sekmesinden yükleyin.")
 
 def get_face_center_x(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -115,13 +142,24 @@ def render_clip(input_path, start, end, output_path, center_x):
     cmd = f'ffmpeg -y -ss {start} -i "{input_path}" -t {duration} -vf "{crop_filter}" -c:v libx264 -crf 20 -preset fast -c:a aac "{output_path}"'
     subprocess.run(cmd, shell=True, check=True)
 
-if st.button("Shorts Üret") and video_url:
+if st.button("Shorts Üret"):
     if not api_key_input:
         st.error("Lütfen sol panelden OpenAI API Key girin!")
     else:
-        with st.spinner("Video indiriliyor ve bulutta işleniyor..."):
+        v_file = None
+        with st.spinner("Video hazırlanıyor..."):
             try:
-                v_file = download_video(video_url)
+                if uploaded_file is not None:
+                    v_file = "input_video.mp4"
+                    with open(v_file, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                elif video_url:
+                    v_file = download_youtube_video(video_url)
+                else:
+                    st.warning("Lütfen bir YouTube URL'si girin veya bir video dosyası yükleyin.")
+                    st.stop()
+
+                st.info("Yüz tespiti ve ses deşifresi yapılıyor...")
                 center_x = get_face_center_x(v_file)
                 transcript, analysis = analyze_video(v_file, api_key_input)
                 
