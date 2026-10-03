@@ -3,7 +3,7 @@ import json
 import subprocess
 import cv2
 import streamlit as st
-import yt_dlp
+import requests
 import whisper
 import openai
 
@@ -13,35 +13,70 @@ st.title("🎬 Bulut Tabanlı AI Shorts Üreticisi")
 api_key_input = st.sidebar.text_input("OpenAI API Key:", type="password")
 video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
 
+# YouTube 403 Engeli İçin Proxy & API Tabanlı Kesin İndirme Fonksiyonu
 def download_video(url):
     output_path = "input_video.mp4"
     if os.path.exists(output_path):
         os.remove(output_path)
-        
-    ydl_opts = {
-        'format': 'b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/b',
-        'outtmpl': output_path,
-        'overwrites': True,
-        'nocheckcertificate': True,
-        'quiet': True,
-        'no_warnings': True,
-        # YouTube Bot Engelini Aşan Özel İstemci Kimlikleri
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['mweb', 'android_vr', 'ios'],
-                'skip': ['hls', 'dash']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-    }
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-        
-    return output_path
+    # Video ID Çıkarma
+    video_id = url.split("v=")[-1].split("&")[0].split("?")[0].split("/")[-1]
+    
+    # Alternatif Invidious Sunucu Listesi (Bulut Engelini Baypas Eder)
+    instances = [
+        "https://invidious.nerdvpn.de",
+        "https://inv.tux.pizza",
+        "https://invidious.drgns.space",
+        "https://vid.puffyan.us"
+    ]
+    
+    download_success = False
+    
+    for instance in instances:
+        try:
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            resp = requests.get(api_url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                # Ses ve görüntüsü birleşik MP4 formatını seç
+                for fmt in data.get("formatStreams", []):
+                    if "video/mp4" in fmt.get("container", "") or "mp4" in fmt.get("type", ""):
+                        stream_url = fmt.get("url")
+                        
+                        r = requests.get(stream_url, stream=True, timeout=30)
+                        with open(output_path, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=2*1024*1024):
+                                if chunk:
+                                    f.write(chunk)
+                        download_success = True
+                        break
+            if download_success:
+                break
+        except Exception:
+            continue
+            
+    if not download_success:
+        # Son Çare: Cobalt API V10
+        try:
+            cobalt_url = "https://co.wuk.sh/api/json"
+            headers = {"Accept": "application/json", "Content-Type": "application/json"}
+            payload = {"url": url, "vCodec": "h264", "vQuality": "720"}
+            res = requests.post(cobalt_url, json=payload, headers=headers, timeout=15)
+            d_url = res.json().get("url")
+            if d_url:
+                r = requests.get(d_url, stream=True, timeout=30)
+                with open(output_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=2*1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                download_success = True
+        except Exception as e:
+            raise Exception(f"Video indirilemedi: {str(e)}")
+
+    if download_success and os.path.exists(output_path):
+        return output_path
+    else:
+        raise Exception("Video indirilemedi, lütfen farklı bir link deneyin.")
 
 def get_face_center_x(video_path):
     cap = cv2.VideoCapture(video_path)
