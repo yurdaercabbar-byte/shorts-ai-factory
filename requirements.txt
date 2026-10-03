@@ -1,5 +1,6 @@
 streamlit
-yt-dlp>=2024.03.10
+requests
+pytubefix
 openai-whisper
 openai
 opencv-python-headless
