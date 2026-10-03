@@ -10,66 +10,52 @@ import openai
 st.set_page_config(page_title="AI Shorts Fabrikası", layout="wide")
 st.title("🎬 Bulut Tabanlı AI Shorts Üreticisi")
 
+# Yan Panel API Girişleri
 api_key_input = st.sidebar.text_input("OpenAI API Key:", type="password")
+rapidapi_key = st.sidebar.text_input("RapidAPI Key (YouTube İndirici):", type="password")
 
 st.write("---")
-tab1, tab2 = st.tabs(["📁 Doğrudan Video Yükle (1 GB Destekli)", "🔗 YouTube Linki İle"])
+tab1, tab2 = st.tabs(["🔗 YouTube Linki İle (Garantili Proxy)", "📁 Doğrudan Video Yükle"])
 
 with tab1:
-    uploaded_file = st.file_uploader("Cihazınızdan Video Seçin (Max 1 GB):", type=["mp4", "mov", "mkv", "avi"])
-
-with tab2:
     video_url = st.text_input("YouTube Video URL'sini Yapıştırın:")
 
-def download_youtube_video(url):
+with tab2:
+    uploaded_file = st.file_uploader("Cihazınızdan Video Seçin:", type=["mp4", "mov", "mkv", "avi"])
+
+def download_youtube_rapidapi(url, rapid_key):
     output_path = "input_video.mp4"
     if os.path.exists(output_path):
         os.remove(output_path)
     
     video_id = url.split("v=")[-1].split("&")[0].split("?")[0].split("/")[-1]
     
-    piped_instances = [
-        "https://pipedapi.kavin.rocks",
-        "https://api.piped.privacydev.net",
-        "https://pipedapi.tokhmi.xyz",
-        "https://piped-api.garudalinux.org"
-    ]
+    # RapidAPI YouTube MP4 Downloader İstek Yapısı
+    api_url = "https://youtube-video-download-cli.p.rapidapi.com/dl"
     
-    download_success = False
-    for instance in piped_instances:
-        try:
-            api_url = f"{instance}/streams/{video_id}"
-            resp = requests.get(api_url, timeout=8)
-            if resp.status_code == 200:
-                data = resp.json()
-                streams = data.get("videoStreams", [])
-                best_stream = None
-                for s in streams:
-                    if s.get("container") == "mp4" and s.get("videoOnly") == False:
-                        best_stream = s.get("url")
-                        break
-                
-                if not best_stream and streams:
-                    for s in streams:
-                        if s.get("container") == "mp4":
-                            best_stream = s.get("url")
-                            break
-                            
-                if best_stream:
-                    r = requests.get(best_stream, stream=True, timeout=30)
-                    with open(output_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=2*1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                    download_success = True
-                    break
-        except Exception:
-            continue
+    headers = {
+        "x-rapidapi-key": rapid_key,
+        "x-rapidapi-host": "youtube-video-download-cli.p.rapidapi.com"
+    }
+    
+    params = {"id": video_id}
+    
+    response = requests.get(api_url, headers=headers, params=params, timeout=15)
+    
+    if response.status_code == 200:
+        data = response.json()
+        # İndirme bağlantısını al
+        download_url = data.get("urls", [{}])[0].get("url") or data.get("link")
+        
+        if download_url:
+            r = requests.get(download_url, stream=True, timeout=60)
+            with open(output_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=2*1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            return output_path
             
-    if download_success and os.path.exists(output_path):
-        return output_path
-    else:
-        raise Exception("YouTube bulut engeli nedeniyle link indirilemedi. Lütfen videoyu bilgisayarınıza/telefonunuza indirip ilk sekmeden yükleyin.")
+    raise Exception("RapidAPI ile video indirilemedi. Lütfen API Key'inizi veya kotanızı kontrol edin.")
 
 def get_face_center_x(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -80,7 +66,6 @@ def get_face_center_x(video_path):
         ret, frame = cap.read()
         if not ret:
             break
-        # Büyük videolarda performansı korumak için her 30 karede bir tara
         if frame_count % 30 == 0:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
@@ -96,7 +81,6 @@ def get_face_center_x(video_path):
 def analyze_video(video_path, api_key):
     client = openai.OpenAI(api_key=api_key)
     
-    # 1 GB video boyutunda RAM kilitlenmesini önlemek için önce sesi MP3 yapıyoruz
     audio_path = "temp_audio.mp3"
     subprocess.run(f'ffmpeg -y -i "{video_path}" -vn -acodec libmp3lame -ar 16000 -ac 1 "{audio_path}"', shell=True, check=True)
     
@@ -149,23 +133,25 @@ def render_clip(input_path, start, end, output_path, center_x):
 if st.button("Shorts Üret"):
     if not api_key_input:
         st.error("Lütfen sol panelden OpenAI API Key girin!")
+    elif video_url and not rapidapi_key:
+        st.error("YouTube linki indirmek için sol panelden RapidAPI Key girmeniz gerekiyor!")
     else:
         v_file = "input_video.mp4"
-        with st.spinner("Video yükleniyor ve işleniyor (Büyük dosyalarda birkaç dakika sürebilir)..."):
+        with st.spinner("Video hazırlanıyor ve işleniyor..."):
             try:
-                if uploaded_file is not None:
+                if video_url:
+                    v_file = download_youtube_rapidapi(video_url, rapidapi_key)
+                elif uploaded_file is not None:
                     with open(v_file, "wb") as f:
                         f.write(uploaded_file.getbuffer())
-                elif video_url:
-                    v_file = download_youtube_video(video_url)
                 else:
-                    st.warning("Lütfen bir video dosyası yükleyin veya YouTube URL'si girin.")
+                    st.warning("Lütfen bir YouTube URL'si girin veya video dosyası yükleyin.")
                     st.stop()
 
                 st.info("Kare tespiti yapılıyor...")
                 center_x = get_face_center_x(v_file)
                 
-                st.info("Ses çıkarılıyor ve Whisper ile deşifre ediliyor...")
+                st.info("Ses çözümleniyor ve AI ile analiz ediliyor...")
                 transcript, analysis = analyze_video(v_file, api_key_input)
                 
                 os.makedirs("output", exist_ok=True)
