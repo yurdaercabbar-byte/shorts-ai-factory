@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: shorts-telegram-bot
+    env: python
+    buildCommand: "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
+    startCommand: "python main.py"
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
