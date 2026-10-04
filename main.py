@@ -3,7 +3,6 @@ import json
 import subprocess
 import requests
 import cv2
-import whisper
 import openai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -66,15 +65,23 @@ def analyze_video(video_path):
     audio_path = "temp_audio.mp3"
     subprocess.run(f'ffmpeg -y -i "{video_path}" -vn -acodec libmp3lame -ar 16000 -ac 1 "{audio_path}"', shell=True, check=True)
     
-    model = whisper.load_model("base")
-    result = model.transcribe(audio_path)
+    # OpenAI Whisper API Kullanımı (Sunucuya yük bindirmez)
+    with open(audio_path, "rb") as audio_file:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="verbose_json"
+        )
     
     if os.path.exists(audio_path):
         os.remove(audio_path)
     
     transcript_text = ""
-    for seg in result['segments']:
-        transcript_text += f"[{seg['start']:.1f}s - {seg['end']:.1f}s]: {seg['text']}\n"
+    for seg in transcript.segments:
+        start_time = seg.get('start', seg.get('start_time', 0))
+        end_time = seg.get('end', seg.get('end_time', 0))
+        text = seg.get('text', '')
+        transcript_text += f"[{start_time:.1f}s - {end_time:.1f}s]: {text}\n"
 
     prompt = f"""
     Aşağıdaki video deşifresini incele. En viral olabilecek 30-60 saniyelik sahneleri seç.
