@@ -1,5 +1,4 @@
 python-telegram-bot
 openai
-openai-whisper
 opencv-python-headless
 requests
