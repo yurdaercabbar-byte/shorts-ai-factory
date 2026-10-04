@@ -51,35 +51,19 @@ def download_youtube(url, output_path="input_video.mp4"):
     if os.path.exists(output_path):
         os.remove(output_path)
 
-    cobalt_instances = [
-        "https://api.cobalt.tools",
-        "https://cobalt-api.kwiatek.xyz",
-        "https://cobalt.q13.cz"
-    ]
-
-    for instance in cobalt_instances:
-        try:
-            headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            payload = {"url": url, "videoQuality": "720"}
-            res = requests.post(f"{instance}/", json=payload, headers=headers, timeout=12)
-            if res.status_code == 200:
-                stream_url = res.json().get("url")
-                if stream_url:
-                    r = requests.get(stream_url, stream=True, timeout=90)
-                    with open(output_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=2*1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                    return output_path
-        except Exception:
-            continue
-    raise Exception("Video indirilemedi, lütfen linki kontrol edin veya tekrar deneyin.")
+    # yt-dlp ile doğrudan ve engelsiz indirme
+    cmd = f'yt-dlp -f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best" --no-playlist -o "{output_path}" "{url}"'
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    
+    if os.path.exists(output_path):
+        return output_path
+    else:
+        raise Exception(f"Video indirilemedi: {result.stderr[:150]}")
 
 def analyze_video(video_path):
     audio_path = "temp_audio.mp3"
     subprocess.run(f'ffmpeg -y -i "{video_path}" -vn -acodec libmp3lame -ar 16000 -ac 1 "{audio_path}"', shell=True, check=True)
     
-    # OpenAI Whisper API Kullanımı (Sunucu RAM'ini yormaz)
     with open(audio_path, "rb") as audio_file:
         transcript = client.audio.transcriptions.create(
             model="whisper-1",
@@ -175,10 +159,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Bir hata oluştu: {str(e)}")
 
 if __name__ == "__main__":
-    # Arka planda Render için port dinleyici başlat
     threading.Thread(target=run_health_check_server, daemon=True).start()
-    
-    # Telegram Botunu Başlat
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
