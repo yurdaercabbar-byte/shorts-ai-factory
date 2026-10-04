@@ -14,7 +14,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# Render "Web Service" canlılık kontrolü (Health Check)
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -51,20 +50,63 @@ def download_youtube(url, output_path="input_video.mp4"):
     if os.path.exists(output_path):
         os.remove(output_path)
 
-    # YouTube JS zorunluluğunu bypass eden android/web istemci parametreleri
+    # 1. YÖNTEM: Cobalt & Public Proxy Ağları (429 IP Banına takılmaz)
+    cobalt_instances = [
+        "https://co.wuk.sh/api/json",
+        "https://cobalt-api.kwiatek.xyz",
+        "https://api.cobalt.tools"
+    ]
+
+    for instance in cobalt_instances:
+        try:
+            headers = {"Accept": "application/json", "Content-Type": "application/json"}
+            payload = {"url": url, "vQuality": "720"}
+            res = requests.post(f"{instance}", json=payload, headers=headers, timeout=10)
+            if res.status_code == 200:
+                stream_url = res.json().get("url")
+                if stream_url:
+                    r = requests.get(stream_url, stream=True, timeout=120)
+                    with open(output_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=2*1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                        return output_path
+        except Exception:
+            continue
+
+    # 2. YÖNTEM: Piped API fallback
+    try:
+        video_id = url.split("v=")[-1].split("&")[0].split("/")[-1].split("?")[0]
+        piped_res = requests.get(f"https://pipedapi.kavin.rocks/streams/{video_id}", timeout=10)
+        if piped_res.status_code == 200:
+            streams = piped_res.json().get("videoStreams", [])
+            for s in streams:
+                if s.get("quality") in ["720p", "480p", "360p"]:
+                    stream_url = s.get("url")
+                    r = requests.get(stream_url, stream=True, timeout=120)
+                    with open(output_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=2*1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                        return output_path
+    except Exception:
+        pass
+
+    # 3. YÖNTEM: yt-dlp ile iOS/Web Emülasyonu
     cmd = (
         f'yt-dlp '
-        f'--extractor-args "youtube:player_client=android,web" '
-        f'-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best" '
+        f'--extractor-args "youtube:player_client=ios,web" '
+        f'-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]" '
         f'--no-playlist -o "{output_path}" "{url}"'
     )
-    
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    
-    if os.path.exists(output_path):
+    subprocess.run(cmd, shell=True, capture_output=True, text=True)
+
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
         return output_path
     else:
-        raise Exception(f"Video indirilemedi: {result.stderr[:150]}")
+        raise Exception("YouTube IP engeline takıldı. Lütfen birkaç dakika sonra tekrar deneyin veya farklı bir link atın.")
 
 def analyze_video(video_path):
     audio_path = "temp_audio.mp3"
