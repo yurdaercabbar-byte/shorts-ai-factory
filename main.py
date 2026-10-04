@@ -14,7 +14,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# Render'ın "Web Service" canlılık kontrolü (Health Check) için basit HTTP sunucu
+# Render "Web Service" canlılık kontrolü (Health Check)
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -51,8 +51,14 @@ def download_youtube(url, output_path="input_video.mp4"):
     if os.path.exists(output_path):
         os.remove(output_path)
 
-    # yt-dlp ile doğrudan ve engelsiz indirme
-    cmd = f'yt-dlp -f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best" --no-playlist -o "{output_path}" "{url}"'
+    # YouTube JS zorunluluğunu bypass eden android/web istemci parametreleri
+    cmd = (
+        f'yt-dlp '
+        f'--extractor-args "youtube:player_client=android,web" '
+        f'-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best" '
+        f'--no-playlist -o "{output_path}" "{url}"'
+    )
+    
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     
     if os.path.exists(output_path):
