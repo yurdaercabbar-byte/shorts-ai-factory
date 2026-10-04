@@ -4,6 +4,8 @@ import subprocess
 import requests
 import cv2
 import openai
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -11,6 +13,18 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8771165040:AAFUJInYLIYqVf9
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+# Render'ın "Web Service" canlılık kontrolü (Health Check) için basit HTTP sunucu
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is live and running!")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
 
 def get_face_center_x(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -65,7 +79,7 @@ def analyze_video(video_path):
     audio_path = "temp_audio.mp3"
     subprocess.run(f'ffmpeg -y -i "{video_path}" -vn -acodec libmp3lame -ar 16000 -ac 1 "{audio_path}"', shell=True, check=True)
     
-    # OpenAI Whisper API Kullanımı (Sunucuya yük bindirmez)
+    # OpenAI Whisper API Kullanımı (Sunucu RAM'ini yormaz)
     with open(audio_path, "rb") as audio_file:
         transcript = client.audio.transcriptions.create(
             model="whisper-1",
@@ -161,6 +175,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Bir hata oluştu: {str(e)}")
 
 if __name__ == "__main__":
+    # Arka planda Render için port dinleyici başlat
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+    
+    # Telegram Botunu Başlat
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
