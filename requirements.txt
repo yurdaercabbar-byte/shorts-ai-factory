@@ -1,5 +1,5 @@
-streamlit
-requests
-openai-whisper
+python-telegram-bot
 openai
+openai-whisper
 opencv-python-headless
+requests
