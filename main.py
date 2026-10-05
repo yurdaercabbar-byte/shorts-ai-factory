@@ -24,7 +24,7 @@ def generate_story(topic):
     """
     completion = groq_client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
-        model="llama-3.1-8b-instant"
+        model="llama-3.3-70b-versatile"
     )
     return completion.choices[0].message.content
 
@@ -58,7 +58,7 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_file = "scene.jpg"
         
         sample_audio_text = f"{user_topic} hakkında hazırlanan içerik özeti seslendiriliyor."
-        await generate_audio(sample_audio_text, audio_file)
+        await generate_audio(sample_audio_text, output_path=audio_file)
         
         generate_watermark_free_image(f"An illustration representing {user_topic}, dynamic concept art", image_file)
         
