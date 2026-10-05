@@ -1,5 +1,5 @@
 python-telegram-bot
-openai
-opencv-python-headless
+groq
+edge-tts
 requests
-yt-dlp
+pillow
