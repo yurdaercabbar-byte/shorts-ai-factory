@@ -13,19 +13,23 @@ TELEGRAM_BOT_TOKEN = "8277254415:AAHGXNzkv8GTh9Q6fW_c6Vw5L_f6JgT3eok"
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Render'ın Port Taramasını Geçmek İçin Kukla HTTP Sunucusu
+# Render Port Taramasını Geçmek İçin Basit Sunucu
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+        
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# 1. SENARYO ÜRETİMİ (GÜNCEL MODEL)
+# 1. SENARYO ÜRETİMİ
 def generate_story(topic):
     prompt = f"""
     Sen profesyonel bir içerik üreticisisin.
@@ -39,7 +43,7 @@ def generate_story(topic):
     """
     completion = groq_client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
-        model="llama-3.3-70b-versatile"
+        model="llama-3.1-8b-instant"
     )
     return completion.choices[0].message.content
 
@@ -92,7 +96,6 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Bir hata oluştu: {str(e)}")
 
 def main():
-    # Render port kontrolünü geçmek için sunucuyu yan thread'de çalıştır
     threading.Thread(target=run_dummy_server, daemon=True).start()
     
     print("🤖 Telegram Botu Başlatılıyor...")
