@@ -1,5 +1,5 @@
-python-telegram-bot
-groq
-edge-tts
-requests
-pillow
+python-telegram-bot==20.7
+groq==0.4.2
+edge-tts==6.1.9
+requests==2.31.0
+pillow==10.2.0
