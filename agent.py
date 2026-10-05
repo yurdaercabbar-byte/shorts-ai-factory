@@ -1,215 +1,96 @@
 import os
-import json
-import subprocess
+import asyncio
 import requests
-import cv2
-import openai
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import edge_tts
+from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8771165040:AAFUJInYLIYqVf9KCajpXMlgyK3kNVNSJu0")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# API VE BOT TOKENLARI
+GROQ_API_KEY = "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"
+TELEGRAM_BOT_TOKEN = "8277254415:AAHGXNzkv8GTh9Q6fW_c6Vw5L_f6JgT3eok"
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY)
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is live and running!")
-
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
-
-def get_face_center_x(video_path):
-    cap = cv2.VideoCapture(video_path)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    total_x, count, frame_count = 0, 0, 0
-
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_count % 30 == 0:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-            for (x, y, w, h) in faces:
-                total_x += (x + w // 2)
-                count += 1
-        frame_count += 1
-        if count > 30:
-            break
-    cap.release()
-    return int(total_x / count) if count > 0 else None
-
-def download_youtube(url, output_path="input_video.mp4"):
-    if os.path.exists(output_path):
-        os.remove(output_path)
-
-    # 1. YÖNTEM: Cobalt & Public Proxy Ağları (429 IP Banına takılmaz)
-    cobalt_instances = [
-        "https://co.wuk.sh/api/json",
-        "https://cobalt-api.kwiatek.xyz",
-        "https://api.cobalt.tools"
-    ]
-
-    for instance in cobalt_instances:
-        try:
-            headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            payload = {"url": url, "vQuality": "720"}
-            res = requests.post(f"{instance}", json=payload, headers=headers, timeout=10)
-            if res.status_code == 200:
-                stream_url = res.json().get("url")
-                if stream_url:
-                    r = requests.get(stream_url, stream=True, timeout=120)
-                    with open(output_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=2*1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-                        return output_path
-        except Exception:
-            continue
-
-    # 2. YÖNTEM: Piped API fallback
-    try:
-        video_id = url.split("v=")[-1].split("&")[0].split("/")[-1].split("?")[0]
-        piped_res = requests.get(f"https://pipedapi.kavin.rocks/streams/{video_id}", timeout=10)
-        if piped_res.status_code == 200:
-            streams = piped_res.json().get("videoStreams", [])
-            for s in streams:
-                if s.get("quality") in ["720p", "480p", "360p"]:
-                    stream_url = s.get("url")
-                    r = requests.get(stream_url, stream=True, timeout=120)
-                    with open(output_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=2*1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-                        return output_path
-    except Exception:
-        pass
-
-    # 3. YÖNTEM: yt-dlp ile iOS/Web Emülasyonu
-    cmd = (
-        f'yt-dlp '
-        f'--extractor-args "youtube:player_client=ios,web" '
-        f'-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]" '
-        f'--no-playlist -o "{output_path}" "{url}"'
-    )
-    subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
-    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-        return output_path
-    else:
-        raise Exception("YouTube IP engeline takıldı. Lütfen birkaç dakika sonra tekrar deneyin veya farklı bir link atın.")
-
-def analyze_video(video_path):
-    audio_path = "temp_audio.mp3"
-    subprocess.run(f'ffmpeg -y -i "{video_path}" -vn -acodec libmp3lame -ar 16000 -ac 1 "{audio_path}"', shell=True, check=True)
-    
-    with open(audio_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
-            response_format="verbose_json"
-        )
-    
-    if os.path.exists(audio_path):
-        os.remove(audio_path)
-    
-    transcript_text = ""
-    for seg in transcript.segments:
-        start_time = seg.get('start', seg.get('start_time', 0))
-        end_time = seg.get('end', seg.get('end_time', 0))
-        text = seg.get('text', '')
-        transcript_text += f"[{start_time:.1f}s - {end_time:.1f}s]: {text}\n"
-
+# 1. HİKAYE VE SENARYO ÜRETİMİ (GROQ)
+def generate_story(topic):
     prompt = f"""
-    Aşağıdaki video deşifresini incele. En viral olabilecek 30-60 saniyelik sahneleri seç.
-    Çıktıyı SADECE geçerli bir JSON formatında ver:
-    {{
-      "clips": [
-        {{
-          "start_time": 10.0,
-          "end_time": 45.0,
-          "score": 9.5,
-          "title": "İnanılmaz An! 😱 #shorts",
-          "description": "En can alıcı nokta..."
-        }}
-      ]
-    }}
-    Deşifre:
-    {transcript_text}
+    Sen profesyonel bir içerik üreticisisin.
+    Konu: '{topic}'.
+    Bu konu hakkında akıcı, sürükleyici, anlatıcı dilinde 5-10 dakikalık detaylı bir konuşma metni hazırla.
+    Metni ana sahnelere böl ve her sahne için İngilizce çizim/karikatür görsel promptları ekle.
+    
+    Format:
+    SAHNE 1: [Görsel Promptu - İngilizce]
+    METİN 1: [Okunacak Konuşma Metni - Türkçe]
     """
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}]
+    
+    completion = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model="llama-3.1-8b-instant"
     )
-    return json.loads(response.choices[0].message.content)
+    return completion.choices[0].message.content
 
-def render_clip(input_path, start, end, output_path, center_x):
-    duration = end - start
-    if center_x:
-        crop_filter = f"crop=ih*(9/16):ih:x='min(max(0,{center_x}-out_w/2),in_w-out_w)':y=0"
-    else:
-        crop_filter = "crop=ih*(9/16):ih"
+# 2. FİLİGRANSIZ GÖRSEL ÜRETİMİ (Pollinations AI - Flux)
+def generate_watermark_free_image(prompt_text, output_path):
+    encoded_prompt = requests.utils.quote(f"{prompt_text}, digital art style, detailed, expressive animation look, no watermark")
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1280&height=720&model=flux&nologo=true"
+    
+    response = requests.get(image_url)
+    if response.status_code == 200:
+        with open(output_path, 'wb') as f:
+            f.write(response.content)
+        return True
+    return False
 
-    cmd = f'ffmpeg -y -ss {start} -i "{input_path}" -t {duration} -vf "{crop_filter}" -c:v libx264 -crf 20 -preset fast -c:a aac "{output_path}"'
-    subprocess.run(cmd, shell=True, check=True)
+# 3. DOĞAL SESLENDİRME (Edge TTS)
+async def generate_audio(text, output_path):
+    communicate = edge_tts.Communicate(text, "tr-TR-AhmetNeural")
+    await communicate.save(output_path)
 
+# START KOMUTU
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Selam! Bana bir YouTube video linki gönder, senin için viral Shorts videoları oluşturup video olarak geri atayım.")
+    await update.message.reply_text("👋 Selam! Bana bir konu söyle (Örn: 'İlk insanlar ateşi nasıl keşfetti?'), senin için araştırıp senaryosunu, filigransız görselini ve seslendirmesini hazırlayayım!")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text
-    if "youtube.com" not in url and "youtu.be" not in url:
-        await update.message.reply_text("Lütfen geçerli bir YouTube linki gönderin.")
-        return
-
-    status_msg = await update.message.reply_text("⏳ Video indiriliyor...")
+# MESAJ YAKALAYICI VE İÇERİK ÜRETİCİ
+async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_topic = update.message.text
+    chat_id = update.effective_chat.id
+    
+    status_msg = await update.message.reply_text(f"🚀 **Ajan Devreye Girdi!**\n\n`{user_topic}` konusu araştırılıyor, senaryo yazılıyor ve görseller üretiliyor... Lütfen bekleyin.")
     
     try:
-        video_path = download_youtube(url)
+        # Senaryo Üret
+        story_text = generate_story(user_topic)
         
-        await status_msg.edit_text("🔍 Kadraj ve yüz tespiti yapılıyor...")
-        center_x = get_face_center_x(video_path)
+        # Örnek Görsel ve Ses Dosya Yolları
+        audio_file = "voice.mp3"
+        image_file = "scene.jpg"
         
-        await status_msg.edit_text("🧠 Ses çözümleniyor ve AI ile viral anlar seçiliyor...")
-        analysis = analyze_video(video_path)
+        # Örnek Seslendirme Metni Çekimi
+        sample_audio_text = f"{user_topic} hakkında hazırlanan içerik özeti seslendiriliyor."
+        await generate_audio(sample_audio_text, audio_file)
         
-        clips = analysis.get("clips", [])
-        if not clips:
-            await status_msg.edit_text("Uygun klip bulunamadı.")
-            return
-
-        os.makedirs("output", exist_ok=True)
-        await status_msg.edit_text(f"🎬 {len(clips)} adet Shorts klibi kurgulanıyor...")
-
-        for idx, clip in enumerate(clips):
-            out_file = f"output/short_{idx+1}.mp4"
-            render_clip(video_path, clip['start_time'], clip['end_time'], out_file, center_x)
+        # Filigransız Çizim Üretimi
+        generate_watermark_free_image(f"An illustration representing {user_topic}, dynamic concept art", image_file)
+        
+        # Telegram'a Gönder
+        with open(image_file, 'rb') as photo:
+            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="🎨 **Üretilen Filigransız Sahne Görseli**")
             
-            caption = f"🏆 **Viral Puanı:** {clip.get('score', 'N/A')}/10\n\n📌 **Başlık:** {clip.get('title')}\n\n📝 **Açıklama:** {clip.get('description')}"
+        with open(audio_file, 'rb') as audio:
+            await context.bot.send_audio(chat_id=chat_id, audio=audio, caption="🎙️ **Akıcı Türkçe Seslendirme**")
             
-            with open(out_file, 'rb') as video:
-                await update.message.reply_video(video=video, caption=caption, parse_mode="Markdown")
-
-        await status_msg.edit_text("✅ Tüm Shorts videoları başarıyla tamamlandı!")
+        await context.bot.send_message(chat_id=chat_id, text=f"📝 **Oluşturulan Senaryo:**\n\n{story_text[:3500]}")
+        await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ Bir hata oluştu: {str(e)}")
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Bir hata oluştu: {str(e)}")
 
 if __name__ == "__main__":
-    threading.Thread(target=run_health_check_server, daemon=True).start()
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Bot aktif ve dinlemede...")
-    app.run_polling()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_topic))
+    
+    print("🤖 OTO-AJAN BOTU ÇALIŞIYOR...")
+    app.run_polling(drop_pending_updates=True)
